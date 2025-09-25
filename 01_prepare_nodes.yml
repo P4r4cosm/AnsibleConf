@@ -58,7 +58,7 @@
         state: present
 
     # --- ИСПРАВЛЕННЫЙ БЛОК ДЛЯ DOCKER (GPG key и Repository) ---
-   - name: Create /etc/apt/keyrings directory for Docker
+     - name: Create /etc/apt/keyrings directory for Docker
       ansible.builtin.file:
         path: /etc/apt/keyrings
         state: directory
