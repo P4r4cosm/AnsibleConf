@@ -7,14 +7,14 @@
   tasks:
     - name: Disable swap
       ansible.builtin.command: /sbin/swapoff -a # Указываем полный путь
-      # 'become: yes' на уровне плейбука гарантирует, что эта команда будет выполнена от имени root.
+      become: yes #на уровне плейбука гарантирует, что эта команда будет выполнена от имени root.
 
     - name: Comment out swap entries in /etc/fstab
       ansible.builtin.replace:
         path: /etc/fstab
         regexp: '^(\s*)([^#]+\s+swap\s+.*)$'
         replace: '\1# \2'
-      # 'become: yes' на уровне плейбука гарантирует, что эта задача будет выполнена от имени root и будет иметь разрешение на изменение /etc/fstab.
+      become: yes #на уровне плейбука гарантирует, что эта задача будет выполнена от имени root и будет иметь разрешение на изменение /etc/fstab.
 
     - name: Load kernel modules
       ansible.builtin.shell: |
