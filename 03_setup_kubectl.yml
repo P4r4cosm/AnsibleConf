@@ -1,0 +1,42 @@
+---
+- name: Setup kubectl access on ansible-control node
+  hosts: k8s_master
+  become: yes
+  tasks:
+    - name: Copy kubeconfig to ansible-control node
+      ansible.builtin.fetch:
+        src: /home/admin/.kube/config
+        dest: /home/admin/.kube/config
+        flat: yes
+      delegate_to: ansible-control
+
+    - name: Update kubeconfig with master node IP
+      ansible.builtin.replace:
+        path: /home/admin/.kube/config
+        regexp: 'server: https://127.0.0.1:6443'
+        replace: "server: https://{{ hostvars['k8s_master']['ansible_default_ipv4']['address'] }}:6443" # Assuming 'k8s_master' is the inventory group for your master node and you want the IP of the first host in that group. Adjust as needed.
+      delegate_to: ansible-control
+
+    - name: Set correct permissions on kubeconfig
+      ansible.builtin.file:
+        path: /home/admin/.kube/config
+        owner: admin
+        group: admin
+        mode: 0600
+      delegate_to: ansible-control
+
+    - name: Install kubectl on ansible-control node
+      ansible.builtin.package:
+        name: kubectl
+        state: present
+      delegate_to: ansible-control
+
+    - name: Verify kubectl access
+      ansible.builtin.shell: |
+        kubectl get nodes
+      register: kubectl_nodes
+      delegate_to: ansible-control
+
+    - name: Display nodes info
+      ansible.builtin.debug:
+        msg: "{{ kubectl_nodes.stdout }}"
