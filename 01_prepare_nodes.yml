@@ -5,10 +5,17 @@
   vars:
     k8s_version: "1.28.5"
   tasks:
+ tasks:
     - name: Disable swap
-      ansible.builtin.shell: |
-        swapoff -a
-        sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+      ansible.builtin.command: swapoff -a
+      # 'become: yes' на уровне плейбука гарантирует, что эта команда будет выполнена от имени root.
+
+    - name: Comment out swap entries in /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(\s*)([^#]+\s+swap\s+.*)$'
+        replace: '\1# \2'
+      # 'become: yes' на уровне плейбука гарантирует, что эта задача будет выполнена от имени root и будет иметь разрешение на изменение /etc/fstab.
 
     - name: Load kernel modules
       ansible.builtin.shell: |
