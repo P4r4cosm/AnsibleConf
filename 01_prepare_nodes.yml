@@ -58,7 +58,7 @@
         state: present
 
     # --- ИСПРАВЛЕННЫЙ БЛОК ДЛЯ DOCKER (GPG key и Repository) ---
-    - name: Create /etc/apt/keyrings directory for Docker
+   - name: Create /etc/apt/keyrings directory for Docker
       ansible.builtin.file:
         path: /etc/apt/keyrings
         state: directory
@@ -68,8 +68,6 @@
       ansible.builtin.shell:
         cmd: curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
         creates: /etc/apt/keyrings/docker.gpg
-      args:
-        warn: false # curl output might be considered a warning, but it's normal
 
     - name: Ensure Docker GPG key has correct permissions
       ansible.builtin.file:
@@ -78,7 +76,6 @@
 
     - name: Add Docker repository
       ansible.builtin.apt_repository:
-        # Используем переменную docker_debian_release
         repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ docker_debian_release }} stable"
         state: present
         filename: docker
@@ -125,8 +122,6 @@
       ansible.builtin.shell:
         cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
         creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-      args:
-        warn: false
 
     - name: Ensure Kubernetes GPG key has correct permissions
       ansible.builtin.file:
