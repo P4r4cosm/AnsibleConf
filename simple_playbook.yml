@@ -1,0 +1,4 @@
+- hosts: k8s_all
+  tasks:
+    - name: Test connection
+      ping:
