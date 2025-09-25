@@ -5,9 +5,8 @@
   vars:
     k8s_version: "1.28.5"
   tasks:
- tasks:
     - name: Disable swap
-      ansible.builtin.command: swapoff -a
+      ansible.builtin.command: /sbin/swapoff -a # Указываем полный путь
       # 'become: yes' на уровне плейбука гарантирует, что эта команда будет выполнена от имени root.
 
     - name: Comment out swap entries in /etc/fstab
