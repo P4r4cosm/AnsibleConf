@@ -82,6 +82,14 @@
         state: restarted
         enabled: yes
         daemon_reload: yes
+    - name: Clean up old Kubernetes repository configurations
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/kubernetes.list # Файл репозитория
+        - /etc/apt/keyrings/kubernetes-apt-keyring.gpg # Старый ключ 1
+        - /etc/apt/keyrings/kubernetes-apt-keyring.key # Старый ключ 2
 
     - name: Add Kubernetes GPG key
       ansible.builtin.get_url:
