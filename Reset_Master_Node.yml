@@ -1,0 +1,22 @@
+---
+- name: Forcefully reset master node state
+  hosts: k8s_master
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: Reset kubeadm
+      ansible.builtin.command: kubeadm reset --force
+      register: reset_status
+      changed_when: "'The reset process succeeded' in reset_status.stdout"
+      failed_when: "'The reset process succeeded' not in reset_status.stdout and 'could not find a Kubernetes cluster' not in reset_status.stderr"
+
+    - name: Remove ALL kubernetes configuration files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes/admin.conf
+        - /etc/kubernetes/kubelet.conf
+        - /etc/kubernetes/pki
+        - /home/admin/.kube # Удаляем и директорию пользователя
