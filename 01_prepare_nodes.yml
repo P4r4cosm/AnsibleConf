@@ -145,9 +145,9 @@
     - name: Install kubeadm, kubelet, and kubectl
       ansible.builtin.package:
         name:
-          - kubelet={{ k8s_version }}-00
-          - kubeadm={{ k8s_version }}-00
-          - kubectl={{ k8s_version }}-00
+          - kubelet={{ k8s_version }}
+          - kubeadm={{ k8s_version }}
+          - kubectl={{ k8s_version }}
         state: present
         update_cache: yes
         allow_downgrade: yes
