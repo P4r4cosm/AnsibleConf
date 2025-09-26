@@ -1,75 +1,70 @@
 ---
-- name: Initialize Kubernetes cluster, setup kubectl and install CNI
+- name: Initialize Kubernetes cluster on master node
   hosts: k8s_master
   become: yes
   vars:
-    k8s_version: "1.28.15"
+    k8s_version: "1.28.5"
     pod_network_cidr: "10.244.0.0/16"
-    local_user: admin
 
   tasks:
-    # --- Шаг 1: Инициализация кластера ---
-    - name: Initialize the Kubernetes cluster using kubeadm
-      ansible.builtin.shell: |
-        kubeadm init \
-        --pod-network-cidr {{ pod_network_cidr }} \
-        --kubernetes-version v{{ k8s_version }}
-      args:
+    - name: Initialize cluster with kubeadm
+      ansible.builtin.shell:
+        # Используем cmd и creates для идемпотентности: команда не будет выполняться,
+        # если файл admin.conf уже существует.
+        cmd: >
+          kubeadm init
+          --pod-network-cidr {{ pod_network_cidr }}
+          --service-cidr 10.96.0.0/12
+          --kubernetes-version v{{ k8s_version }}
+          --apiserver-advertise-address {{ ansible_default_ipv4.address }}
+          --apiserver-cert-extra-sans {{ ansible_hostname }}
         creates: /etc/kubernetes/admin.conf
       register: kubeadm_init
+      changed_when: kubeadm_init.rc == 0
 
-    # --- НОВЫЙ ШАГ: Ожидание готовности API Server ---
-    - name: Wait for the API server to be ready
+    - name: Create .kube directory for admin user
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0755'
+
+    - name: Copy admin config to user directory
+      # Замена shell на модуль copy - более правильный и идемпотентный способ.
+      # remote_src: yes указывает, что источник и назначение находятся на удаленной машине.
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/admin/.kube/config
+        remote_src: yes
+        owner: admin
+        group: admin
+        mode: '0644'
+
+    - name: Extract complete join command from kubeadm output
+      ansible.builtin.set_fact:
+        # Этот regex более надежно захватывает всю строку с командой join
+        join_command: "{{ kubeadm_init.stdout | regex_search('kubeadm join.*') }}"
+      when: kubeadm_init.stdout is defined
+
+    - name: Save join command to file
+      ansible.builtin.copy:
+        content: "{{ join_command }}"
+        dest: /tmp/k8s_join_command.txt
+        owner: admin
+        group: admin
+        mode: '0644'
+      when: join_command is defined
+
+    - name: Display join command for verification
+      ansible.builtin.debug:
+        msg: "Join command: {{ join_command }}"
+      when: join_command is defined
+
+    - name: Wait for Kubernetes API to be ready
       ansible.builtin.wait_for:
         host: "{{ ansible_default_ipv4.address }}"
         port: 6443
-        delay: 10      # Проверять каждые 10 секунд
-        timeout: 120   # Ждать не более 2 минут
+        delay: 10
+        timeout: 120
         state: started
-      
-    # --- Шаг 2: Настройка kubectl для локального пользователя ---
-    - name: Create .kube directory for the local user
-      ansible.builtin.file:
-        path: "/home/{{ local_user }}/.kube"
-        state: directory
-        owner: "{{ local_user }}"
-        group: "{{ local_user }}"
-        mode: '0755'
-
-    - name: Copy admin.conf to user's kube config
-      ansible.builtin.copy:
-        src: /etc/kubernetes/admin.conf
-        dest: "/home/{{ local_user }}/.kube/config"
-        remote_src: yes
-        owner: "{{ local_user }}"
-        group: "{{ local_user }}"
-        mode: '0600'
-
-    # --- Шаг 3: Установка сетевого плагина Calico ---
-    - name: Install Calico Pod Network from manifest
-      ansible.builtin.shell: >
-        kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      args:
-        creates: /etc/cni/net.d/10-calico.conflist
-
-    - name: Pause for 60 seconds to allow Calico pods to start
-      ansible.builtin.pause:
-        seconds: 60
-        prompt: "Waiting 60 seconds for the Pod network to be ready..."
-
-    # --- Шаг 4: Получение команды для присоединения воркеров ---
-    - name: Get the join command for worker nodes
-      ansible.builtin.shell: kubeadm token create --print-join-command
-      register: join_command_raw
-
-    - name: Store the join command in a file for the next playbook
-      ansible.builtin.copy:
-        content: "{{ join_command_raw.stdout }}"
-        dest: /tmp/k8s_join_command.txt
-        mode: '0644'
-
-    - name: Display the join command for verification
-      ansible.builtin.debug:
-        msg: "Worker nodes can be joined with this command: {{ join_command_raw.stdout }}"
