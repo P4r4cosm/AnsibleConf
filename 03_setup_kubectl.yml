@@ -1,42 +1,53 @@
 ---
-- name: Setup kubectl access on ansible-control node
+- name: Setup kubectl access on the Ansible control node
   hosts: k8s_master
-  become: yes
+  # 'become' здесь не нужен, так как все задачи выполняются на другой машине
+  # become: yes 
+  vars:
+    # Определяем пользователя и путь в переменных для легкого изменения в будущем
+    control_node_user: admin
+    kubeconfig_path: "/home/{{ control_node_user }}/.kube/config"
+
   tasks:
-    - name: Copy kubeconfig to ansible-control node
-      ansible.builtin.fetch:
-        src: /home/admin/.kube/config
-        dest: /home/admin/.kube/config
-        flat: yes
-      delegate_to: ansible-control
+    # Используем блок для применения делегирования и повышения привилегий ко всем задачам сразу.
+    # 'delegate_to: localhost' означает "выполнить на той машине, где запущен ansible-playbook".
+    # 'become: yes' внутри блока означает, что sudo будет использоваться на localhost.
+    - name: Delegate kubectl setup to the control node
+      delegate_to: localhost
+      become: yes
+      block:
+        - name: Copy kubeconfig from master to control node
+          ansible.builtin.fetch:
+            src: /home/admin/.kube/config  # Источник на k8s-master
+            dest: "{{ kubeconfig_path }}"     # Назначение на control node
+            flat: yes
 
-    - name: Update kubeconfig with master node IP
-      ansible.builtin.replace:
-        path: /home/admin/.kube/config
-        regexp: 'server: https://127.0.0.1:6443'
-        replace: "server: https://{{ hostvars['k8s-master-01']['ansible_default_ipv4']['address'] }}:6443"
-      delegate_to: ansible-control
+        - name: Update server IP in kubeconfig
+          ansible.builtin.replace:
+            path: "{{ kubeconfig_path }}"
+            regexp: 'server: https://127.0.0.1:6443'
+            # ansible_default_ipv4.address берет IP мастер-ноды, на которой запущен плей
+            replace: "server: https://{{ ansible_default_ipv4.address }}:6443"
 
-    - name: Set correct permissions on kubeconfig
-      ansible.builtin.file:
-        path: /home/admin/.kube/config
-        owner: admin
-        group: admin
-        mode: '0600'
-      delegate_to: ansible-control
+        - name: Set correct permissions on local kubeconfig
+          ansible.builtin.file:
+            path: "{{ kubeconfig_path }}"
+            owner: "{{ control_node_user }}"
+            group: "{{ control_node_user }}"
+            mode: '0600'
 
-    - name: Install kubectl on ansible-control node
-      ansible.builtin.package:
-        name: kubectl
-        state: present
-      delegate_to: ansible-control
+        - name: Install kubectl on control node if not present
+          ansible.builtin.package:
+            name: kubectl
+            state: present
 
-    - name: Verify kubectl access
-      ansible.builtin.shell: |
-        kubectl get nodes
-      register: kubectl_nodes
-      delegate_to: ansible-control
+        - name: Verify kubectl access by getting nodes
+          # Команды, которые не меняют состояние системы, лучше запускать без become
+          become: no
+          ansible.builtin.command: kubectl get nodes
+          register: kubectl_nodes
+          changed_when: false # Эта команда не должна помечать хост как "измененный"
 
-    - name: Display nodes info
-      ansible.builtin.debug:
-        msg: "{{ kubectl_nodes.stdout }}"
+        - name: Display nodes info
+          ansible.builtin.debug:
+            msg: "{{ kubectl_nodes.stdout_lines }}"
