@@ -4,7 +4,7 @@
   become: yes
   vars:
     # Версия Kubernetes, которую вы хотите установить.
-    k8s_version: "1.28.5"
+    k8s_version: "1.28.7"
     # Версия Debian, для которой будет использоваться репозиторий Docker.
     # Измените на 'bookworm' для Debian 12 или оставьте 'bullseye' для Debian 11.
     docker_debian_release: "bullseye"
