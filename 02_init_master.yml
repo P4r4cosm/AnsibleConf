@@ -1,55 +1,69 @@
 ---
-- name: Initialize Kubernetes cluster on master node
+- name: Initialize Kubernetes cluster, setup kubectl and install CNI
   hosts: k8s_master
   become: yes
   vars:
-    k8s_version: "1.28.5"
+    k8s_version: "1.28.15" # Убедитесь, что версия та же, что в 01_prepare_nodes.yml
     pod_network_cidr: "10.244.0.0/16"
+    local_user: admin # Имя вашего обычного пользователя на мастер-ноде
+
   tasks:
-    - name: Initialize cluster with kubeadm
+    # --- Шаг 1: Инициализация кластера ---
+    - name: Initialize the Kubernetes cluster using kubeadm
       ansible.builtin.shell: |
         kubeadm init \
         --pod-network-cidr {{ pod_network_cidr }} \
-        --service-cidr 10.96.0.0/12 \
-        --kubernetes-version v{{ k8s_version }} \
-        --apiserver-advertise-address {{ ansible_default_ipv4.address }} \
-        --apiserver-cert-extra-sans {{ ansible_hostname }}
-      register: kubeadm_init
+        --kubernetes-version v{{ k8s_version }}
       args:
+        # Эта команда не будет выполняться, если кластер уже инициализирован
         creates: /etc/kubernetes/admin.conf
+      register: kubeadm_init
 
-    - name: Create .kube directory for admin user
+    # --- Шаг 2: Настройка kubectl для локального пользователя (ВМЕСТО 03_setup_kubectl.yml) ---
+    - name: Create .kube directory for the local user
       ansible.builtin.file:
-        path: /home/admin/.kube
+        path: "/home/{{ local_user }}/.kube"
         state: directory
-        owner: admin
-        group: admin
-        mode: 0755
+        owner: "{{ local_user }}"
+        group: "{{ local_user }}"
+        mode: '0755'
 
-    - name: Copy admin config to user directory
-      ansible.builtin.shell: |
-        cp -f /etc/kubernetes/admin.conf /home/admin/.kube/config
-        chown admin:admin /home/admin/.kube/config
-
-    - name: Extract join command from kubeadm output
-      ansible.builtin.set_fact:
-        join_command: "{{ kubeadm_init.stdout | regex_search('kubeadm join.*?--token') }}"
-
-    - name: Save join command to file
+    - name: Copy admin.conf to user's kube config
       ansible.builtin.copy:
-        content: "{{ join_command }}"
+        src: /etc/kubernetes/admin.conf
+        dest: "/home/{{ local_user }}/.kube/config"
+        remote_src: yes # Очень важный параметр! Говорит, что копируем файл на той же машине
+        owner: "{{ local_user }}"
+        group: "{{ local_user }}"
+        mode: '0600'
+
+    # --- Шаг 3: Установка сетевого плагина Calico (решает проблему с таймаутом) ---
+    - name: Install Calico Pod Network from manifest
+      ansible.builtin.shell: >
+        kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+      environment:
+        # Выполняем kubectl с правами администратора кластера
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      args:
+        # Не запускать, если Calico уже установлен
+        creates: /etc/cni/net.d/10-calico.conflist
+
+    - name: Pause for 60 seconds to allow Calico pods to start
+      ansible.builtin.pause:
+        seconds: 60
+        prompt: "Waiting 60 seconds for the Pod network to be ready..."
+
+    # --- Шаг 4: Получение команды для присоединения воркеров ---
+    - name: Get the join command for worker nodes
+      ansible.builtin.shell: kubeadm token create --print-join-command
+      register: join_command_raw
+
+    - name: Store the join command in a file for the next playbook
+      ansible.builtin.copy:
+        content: "{{ join_command_raw.stdout }}"
         dest: /tmp/k8s_join_command.txt
-        owner: admin
-        group: admin
-        mode: 0644
+        mode: '0644'
 
-    - name: Display join command for verification
+    - name: Display the join command for verification
       ansible.builtin.debug:
-        msg: "Join command: {{ join_command }}"
-
-    - name: Wait for Kubernetes API to be ready
-      ansible.builtin.wait_for:
-        host: "{{ ansible_default_ipv4.address }}"
-        port: 6443
-        delay: 10
-        timeout: 120
+        msg: "Worker nodes can be joined with this command: {{ join_command_raw.stdout }}"
