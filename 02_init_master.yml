@@ -3,9 +3,9 @@
   hosts: k8s_master
   become: yes
   vars:
-    k8s_version: "1.28.15" # Убедитесь, что версия та же, что в 01_prepare_nodes.yml
+    k8s_version: "1.28.15"
     pod_network_cidr: "10.244.0.0/16"
-    local_user: admin # Имя вашего обычного пользователя на мастер-ноде
+    local_user: admin
 
   tasks:
     # --- Шаг 1: Инициализация кластера ---
@@ -15,11 +15,19 @@
         --pod-network-cidr {{ pod_network_cidr }} \
         --kubernetes-version v{{ k8s_version }}
       args:
-        # Эта команда не будет выполняться, если кластер уже инициализирован
         creates: /etc/kubernetes/admin.conf
       register: kubeadm_init
 
-    # --- Шаг 2: Настройка kubectl для локального пользователя (ВМЕСТО 03_setup_kubectl.yml) ---
+    # --- НОВЫЙ ШАГ: Ожидание готовности API Server ---
+    - name: Wait for the API server to be ready
+      ansible.builtin.wait_for:
+        host: "{{ ansible_default_ipv4.address }}"
+        port: 6443
+        delay: 10      # Проверять каждые 10 секунд
+        timeout: 120   # Ждать не более 2 минут
+        state: started
+      
+    # --- Шаг 2: Настройка kubectl для локального пользователя ---
     - name: Create .kube directory for the local user
       ansible.builtin.file:
         path: "/home/{{ local_user }}/.kube"
@@ -32,20 +40,18 @@
       ansible.builtin.copy:
         src: /etc/kubernetes/admin.conf
         dest: "/home/{{ local_user }}/.kube/config"
-        remote_src: yes # Очень важный параметр! Говорит, что копируем файл на той же машине
+        remote_src: yes
         owner: "{{ local_user }}"
         group: "{{ local_user }}"
         mode: '0600'
 
-    # --- Шаг 3: Установка сетевого плагина Calico (решает проблему с таймаутом) ---
+    # --- Шаг 3: Установка сетевого плагина Calico ---
     - name: Install Calico Pod Network from manifest
       ansible.builtin.shell: >
         kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
       environment:
-        # Выполняем kubectl с правами администратора кластера
         KUBECONFIG: /etc/kubernetes/admin.conf
       args:
-        # Не запускать, если Calico уже установлен
         creates: /etc/cni/net.d/10-calico.conflist
 
     - name: Pause for 60 seconds to allow Calico pods to start
