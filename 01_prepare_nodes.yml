@@ -6,6 +6,17 @@
     k8s_version: "1.28.5"
 
   tasks:
+
+    - name: Clean up old or conflicting repository configurations
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/kubernetes.list          # Старый файл репозитория Kubernetes
+        - /etc/apt/sources.list.d/docker.list              # Старый файл репозитория Docker (на всякий случай)
+        - /etc/apt/keyrings/kubernetes-apt-keyring.gpg     # Старый ключ K8s 1
+        - /etc/apt/keyrings/kubernetes-apt-keyring.key     # Старый ключ K8s 2
+        - /etc/apt/keyrings/docker.gpg                     # Старый ключ Docker
     - name: Disable swap
       ansible.builtin.shell: |
         swapoff -a
@@ -82,14 +93,8 @@
         state: restarted
         enabled: yes
         daemon_reload: yes
-    - name: Clean up old Kubernetes repository configurations
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /etc/apt/sources.list.d/kubernetes.list # Файл репозитория
-        - /etc/apt/keyrings/kubernetes-apt-keyring.gpg # Старый ключ 1
-        - /etc/apt/keyrings/kubernetes-apt-keyring.key # Старый ключ 2
+
+    
 
     - name: Add Kubernetes GPG key
       ansible.builtin.get_url:
