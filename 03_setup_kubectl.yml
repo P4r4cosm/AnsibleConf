@@ -1,41 +1,59 @@
 ---
 - name: Setup kubectl access on ansible-control node
-  hosts: k8s_master
+  hosts: ansible-control # Изменяем хост на ansible-control, так как все действия для него
   become: yes
+
   tasks:
-    - name: Copy kubeconfig to ansible-control node
+    # Шаг 1: Скопировать файл с мастер-ноды на управляющий узел Ansible.
+    # Файл будет сохранен на управляющем узле в директории с именем хоста.
+    # Например: /<path_to_your_project>/k8s-master-01/home/admin/.kube/config
+    - name: Fetch kubeconfig from master node
       ansible.builtin.fetch:
         src: /home/admin/.kube/config
-        dest: /home/admin/.kube/config
+        dest: /tmp/kubeconfig # Сохраняем во временный файл для простоты
         flat: yes
-      delegate_to: ansible-control
+      delegate_to: k8s-master-01 # Выполняем эту задачу от имени мастера
+      become: yes # fetch может требовать sudo для доступа к файлу
 
+    # Шаг 2: Создать директорию .kube на ansible-control
+    - name: Create .kube directory for admin user on ansible-control
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0755'
+
+    # Шаг 3: Скопировать файл из временной локации в нужное место на ansible-control
+    - name: Copy kubeconfig to its final destination
+      ansible.builtin.copy:
+        src: /tmp/kubeconfig
+        dest: /home/admin/.kube/config
+        owner: admin
+        group: admin
+        mode: '0600'
+        remote_src: yes # Указываем, что источник находится на той же машине
+
+    # Шаг 4: Заменить IP-адрес в kubeconfig
     - name: Update kubeconfig with master node IP
       ansible.builtin.replace:
         path: /home/admin/.kube/config
-        regexp: 'server: https://127.0.0.1:6443'
-        replace: "server: https://{{ hostvars['k8s_master']['ansible_default_ipv4']['address'] }}:6443" # Assuming 'k8s_master' is the inventory group for your master node and you want the IP of the first host in that group. Adjust as needed.
-      delegate_to: ansible-control
+        regexp: 'server: https://.*:6443' # Более гибкое выражение для замены
+        # Используем hostvars для получения IP мастера. Убедитесь, что 'k8s-master-01' - правильное имя хоста в inventory.
+        replace: "server: https://{{ hostvars['k8s-master-01']['ansible_default_ipv4']['address'] }}:6443"
 
-    - name: Set correct permissions on kubeconfig
-      ansible.builtin.file:
-        path: /home/admin/.kube/config
-        owner: admin
-        group: admin
-        mode: 0600
-      delegate_to: ansible-control
-
+    # Шаг 5: Установить kubectl, если его еще нет
     - name: Install kubectl on ansible-control node
       ansible.builtin.package:
         name: kubectl
         state: present
-      delegate_to: ansible-control
 
+    # Шаг 6: Проверить доступ к кластеру
     - name: Verify kubectl access
-      ansible.builtin.shell: |
-        kubectl get nodes
+      ansible.builtin.command: kubectl get nodes
       register: kubectl_nodes
-      delegate_to: ansible-control
+      become: yes
+      become_user: admin # Выполняем команду от имени пользователя admin
 
     - name: Display nodes info
       ansible.builtin.debug:
