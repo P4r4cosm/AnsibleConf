@@ -1,63 +1,42 @@
 ---
-# Плейбук 1: Получаем содержимое kubeconfig с мастер-ноды
-- name: Fetch kubeconfig content from master
+- name: Setup kubectl access on ansible-control node
   hosts: k8s_master
   become: yes
   tasks:
-    - name: Read kubeconfig file from master into a variable
-      ansible.builtin.slurp:
+    - name: Copy kubeconfig to ansible-control node
+      ansible.builtin.fetch:
         src: /home/admin/.kube/config
-      register: kubeconfig_slurped_file
-
-    # Сохраняем расшифрованное содержимое в переменную, которая будет доступна другим хостам
-    - name: Set kubeconfig content as a fact for other hosts
-      ansible.builtin.set_fact:
-        # slurp кодирует содержимое в base64, поэтому его нужно декодировать
-        kubeconfig_content: "{{ kubeconfig_slurped_file.content | b64decode }}"
-
-
-# Плейбук 2: Настраиваем kubectl на управляющем узле Ansible
-- name: Setup kubectl access on ansible-control node
-  hosts: ansible-control
-  become: yes
-  tasks:
-    - name: Ensure .kube directory exists on ansible-control
-      ansible.builtin.file:
-        path: /home/admin/.kube
-        state: directory
-        owner: admin
-        group: admin
-        mode: '0755'
-
-    - name: Deploy kubeconfig file to ansible-control using content from variable
-      ansible.builtin.copy:
-        # Вставляем содержимое из переменной, которую мы получили от мастер-ноды
-        content: "{{ hostvars['k8s-master-01'].kubeconfig_content }}"
         dest: /home/admin/.kube/config
+        flat: yes
+      delegate_to: ansible-control
+
+    - name: Update kubeconfig with master node IP
+      ansible.builtin.replace:
+        path: /home/admin/.kube/config
+        regexp: 'server: https://127.0.0.1:6443'
+        replace: "server: https://{{ hostvars['k8s-master-01']['ansible_default_ipv4']['address'] }}:6443"
+      delegate_to: ansible-control
+
+    - name: Set correct permissions on kubeconfig
+      ansible.builtin.file:
+        path: /home/admin/.kube/config
         owner: admin
         group: admin
         mode: '0600'
-
-    - name: Update kubeconfig with the correct master node IP
-      ansible.builtin.replace:
-        path: /home/admin/.kube/config
-        regexp: 'server: https://.*:6443' # Более надежное выражение для поиска
-        replace: "server: https://{{ hostvars['k8s-master-01']['ansible_default_ipv4']['address'] }}:6443"
+      delegate_to: ansible-control
 
     - name: Install kubectl on ansible-control node
       ansible.builtin.package:
         name: kubectl
         state: present
+      delegate_to: ansible-control
 
     - name: Verify kubectl access
-      ansible.builtin.command: kubectl get nodes
+      ansible.builtin.shell: |
+        kubectl get nodes
       register: kubectl_nodes
-      become: yes
-      become_user: admin # Выполняем команду от имени нужного пользователя
-      changed_when: false # Команда получения нод не меняет состояние системы
-      environment:
-        KUBECONFIG: /home/admin/.kube/config # Явно указываем путь к конфигу для надежности
+      delegate_to: ansible-control
 
     - name: Display nodes info
       ansible.builtin.debug:
-        msg: "{{ kubectl_nodes.stdout_lines }}"
+        msg: "{{ kubectl_nodes.stdout }}"
