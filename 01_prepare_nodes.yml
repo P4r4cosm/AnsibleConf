@@ -4,48 +4,29 @@
   become: yes
   vars:
     k8s_version: "1.28.5"
-    # Явно указываем версию Debian для Docker.
-    # Если ваши узлы Debian 12, измените на 'bookworm'.
-    docker_debian_release: "bullseye" 
   tasks:
     - name: Disable swap
-      ansible.builtin.command: /sbin/swapoff -a
-      when: ansible_swaptotal_mb > 0
+      ansible.builtin.shell: |
+        swapoff -a
+        sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-    - name: Comment out swap entries in /etc/fstab
-      ansible.builtin.replace:
-        path: /etc/fstab
-        regexp: '^(\s*)([^#]+\s+swap\s+.*)$'
-        replace: '\1# \2'
+    - name: Load kernel modules
+      ansible.builtin.shell: |
+        cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+        modprobe overlay
+        modprobe br_netfilter
 
-    - name: Ensure kernel modules are loaded on boot
-      ansible.builtin.copy:
-        dest: /etc/modules-load.d/k8s.conf
-        content: |
-          overlay
-          br_netfilter
-        mode: '0644'
-
-    - name: Load kernel module overlay
-      community.general.modprobe:
-        name: overlay
-        state: present
-
-    - name: Load kernel module br_netfilter
-      community.general.modprobe:
-        name: br_netfilter
-        state: present
-
-    - name: Configure required sysctl params for Kubernetes
-      ansible.posix.sysctl:
-        name: "{{ item.name }}"
-        value: "{{ item.value }}"
-        sysctl_file: /etc/sysctl.d/k8s.conf
-        reload: yes
-      loop:
-        - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
-        - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
-        - { name: 'net.ipv4.ip_forward', value: '1' }
+    - name: Configure sysctl params
+      ansible.builtin.shell: |
+        cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+        sysctl --system
 
     - name: Install required packages
       ansible.builtin.package:
@@ -57,53 +38,32 @@
           - lsb-release
         state: present
 
-    # --- ИСПРАВЛЕННЫЙ БЛОК ДЛЯ DOCKER (GPG key и Repository) ---
-    - name: Create /etc/apt/keyrings directory for Docker
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Download Docker's official GPG key
-      ansible.builtin.shell:
-        cmd: curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        creates: /etc/apt/keyrings/docker.gpg
-
-    - name: Ensure Docker GPG key has correct permissions
-      ansible.builtin.file:
-        path: /etc/apt/keyrings/docker.gpg
-        mode: '0644'
+    - name: Add Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
 
     - name: Add Docker repository
       ansible.builtin.apt_repository:
-        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ docker_debian_release }} stable"
+        repo: "deb [arch=amd64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
         state: present
-        filename: docker
-    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ДЛЯ DOCKER ---
 
     - name: Install containerd
       ansible.builtin.package:
         name: containerd.io
         state: present
 
-    # --- ИСПРАВЛЕННЫЙ БЛОК: Создание директории для containerd ---
-    - name: Create /etc/containerd directory
-      ansible.builtin.file:
-        path: /etc/containerd
-        state: directory
-        mode: '0755'
-
     - name: Configure containerd
       ansible.builtin.copy:
         content: |
           [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
             runtime_type = "io.containerd.runc.v2"
-            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-              SystemdCgroup = true
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+            SystemdCgroup = true
         dest: /etc/containerd/config.toml
         owner: root
         group: root
-        mode: 0644
+        mode: '0644'
 
     - name: Restart and enable containerd
       ansible.builtin.systemd:
@@ -111,38 +71,18 @@
         state: restarted
         enabled: yes
 
-    # --- НОВЫЙ ИСПРАВЛЕННЫЙ БЛОК ДЛЯ KUBERNETES (GPG key и Repository) ---
-    - name: Create /etc/apt/keyrings directory for Kubernetes
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Download Kubernetes official GPG key
-      ansible.builtin.shell:
-        # ДОБАВЛЕНА ВЕРСИЯ В URL КЛЮЧА
-        cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0:2] | join('.') }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    
-    - name: Ensure Kubernetes GPG key has correct permissions
-      ansible.builtin.file:
-        path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-        mode: '0644'
-
     - name: Add Kubernetes repository
       ansible.builtin.apt_repository:
-        # ДОБАВЛЕНА ВЕРСИЯ В URL РЕПОЗИТОРИЯ
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0:2] | join('.') }}/deb/ /"
+        repo: "deb https://apt.kubernetes.io/ kubernetes-xenial main"
         state: present
         filename: kubernetes
-    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ДЛЯ KUBERNETES ---
 
     - name: Install kubeadm, kubelet, kubectl
       ansible.builtin.package:
         name:
-          - kubelet={{ k8s_version }}-00
-          - kubeadm={{ k8s_version }}-00
-          - kubectl={{ k8s_version }}-00
+          - "kubelet={{ k8s_version }}-00"
+          - "kubeadm={{ k8s_version }}-00"
+          - "kubectl={{ k8s_version }}-00"
         state: present
         allow_downgrade: yes
 
