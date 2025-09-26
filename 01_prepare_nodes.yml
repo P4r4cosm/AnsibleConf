@@ -120,9 +120,10 @@
 
     - name: Download Kubernetes official GPG key
       ansible.builtin.shell:
-        cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        # ДОБАВЛЕНА ВЕРСИЯ В URL КЛЮЧА
+        cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0:2] | join('.') }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
         creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
+    
     - name: Ensure Kubernetes GPG key has correct permissions
       ansible.builtin.file:
         path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
@@ -130,7 +131,8 @@
 
     - name: Add Kubernetes repository
       ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/deb/ /"
+        # ДОБАВЛЕНА ВЕРСИЯ В URL РЕПОЗИТОРИЯ
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0:2] | join('.') }}/deb/ /"
         state: present
         filename: kubernetes
     # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ДЛЯ KUBERNETES ---
