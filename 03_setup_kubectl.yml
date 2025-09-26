@@ -1,77 +1,44 @@
----
-# ... (первая часть плейбука остается без изменений) ...
+- name: Fetch kubeconfig to the control node's shared volume
+  hosts: k8s_master
+  become: yes # Нужен для чтения /etc/kubernetes/admin.conf
 
-- name: Setup kubectl access on the Ansible control node
-  hosts: k8s_master # Мы все еще целимся в мастер, чтобы иметь доступ к его переменным
-  # 'become' здесь не нужен, так как все задачи выполняются на другой машине
-  # или с явным указанием become
-  
   vars:
-    control_node_user: admin # Убедитесь, что этот пользователь существует на control node
-    kubeconfig_dir: "/home/{{ control_node_user }}/.kube"
-    kubeconfig_path: "{{ kubeconfig_dir }}/config"
-    # Явно указываем IP мастера для использования на control node. 
-    # Это надежнее, чем полагаться на ansible_default_ipv4.address при делегировании.
-    master_ip: "{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
+    # Этот IP будет использован для замены в kubeconfig
+    master_ip: "{{ ansible_default_ipv4.address }}"
+    # Путь к файлу в общем томе внутри контейнера semaphore
+    shared_config_dest: "/tmp/semaphore/kubeconfig"
 
   tasks:
-    # Создаем директорию .kube на управляющей ноде
-    - name: Create .kube directory on the control node
-      delegate_to: localhost
-      become: no # Выполняем от имени текущего пользователя
-      ansible.builtin.file:
-        path: "{{ kubeconfig_dir }}"
-        state: directory
-        owner: "{{ control_node_user }}"
-        group: "{{ control_node_user }}"
-        mode: '0755'
-
-    # Копируем файл конфигурации с мастер-ноды
-    - name: Copy kubeconfig from master to control node
-      delegate_to: localhost
-      become: no # Выполняем от имени текущего пользователя
+    - name: Fetch the kubeconfig file to the Ansible controller
       ansible.builtin.fetch:
-        src: /etc/kubernetes/admin.conf # Копируем оригинальный файл
-        dest: "{{ kubeconfig_path }}"
+        src: /etc/kubernetes/admin.conf
+        # 'dest' здесь - это временный путь на машине, где запущен ansible (т.е. внутри контейнера)
+        dest: /tmp/
         flat: yes
 
-    # Заменяем внутренний IP-адрес на внешний IP мастера в локальном файле
-    - name: Update server IP in the local kubeconfig
+    - name: Update server IP in the fetched kubeconfig
+      # Эта задача выполняется на localhost (внутри контейнера)
       delegate_to: localhost
+      become: no # sudo не нужен для работы с файлами в /tmp
       ansible.builtin.replace:
-        path: "{{ kubeconfig_path }}"
-        regexp: 'server: https://.*:6443' # Более гибкий regex
+        # Путь к файлу, который скачал fetch
+        path: "/tmp/admin.conf" 
+        regexp: 'server: https://.*:6443'
         replace: "server: https://{{ master_ip }}:6443"
 
-    # Устанавливаем правильные права на локальный файл
-    - name: Set correct permissions on local kubeconfig
+    - name: Move the final kubeconfig to the shared volume
+      # И снова, эта задача выполняется на localhost (внутри контейнера)
       delegate_to: localhost
-      become: no # Выполняем от имени текущего пользователя
+      become: no
+      ansible.builtin.copy:
+        src: "/tmp/admin.conf"
+        dest: "{{ shared_config_dest }}"
+        mode: '0644' # Устанавливаем права для чтения всем
+        remote_src: yes # Указываем, что source - это локальный файл внутри контейнера
+
+    - name: Clean up temporary file on the control node
+      delegate_to: localhost
+      become: no
       ansible.builtin.file:
-        path: "{{ kubeconfig_path }}"
-        owner: "{{ control_node_user }}"
-        group: "{{ control_node_user }}"
-        mode: '0600'
-
-    # Устанавливаем kubectl, если он отсутствует
-    - name: Install kubectl on control node if not present
-      delegate_to: localhost
-      become: yes # Здесь нужны права sudo
-      ansible.builtin.package:
-        name: kubectl
-        state: present
-
-    # Проверяем доступ к кластеру
-    - name: Verify kubectl access by getting nodes
-      delegate_to: localhost
-      become: no # Для kubectl get nodes sudo не нужен
-      ansible.builtin.command: kubectl get nodes
-      register: kubectl_nodes
-      changed_when: false
-      environment: # Явно указываем путь к kubeconfig для надежности
-        KUBECONFIG: "{{ kubeconfig_path }}"
-
-    - name: Display nodes info
-      delegate_to: localhost
-      ansible.builtin.debug:
-        msg: "{{ kubectl_nodes.stdout_lines }}"
+        path: "/tmp/admin.conf"
+        state: absent
