@@ -32,15 +32,11 @@
         mode: '0755'
 
     - name: Copy admin config to user directory
-      # Замена shell на модуль copy - более правильный и идемпотентный способ.
-      # remote_src: yes указывает, что источник и назначение находятся на удаленной машине.
-      ansible.builtin.copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /home/admin/.kube/config
-        remote_src: yes
-        owner: admin
-        group: admin
-        mode: '0644'
+      ansible.builtin.shell:
+        cmd: |
+          cp -f /etc/kubernetes/admin.conf /home/admin/.kube/config
+          chown admin:admin /home/admin/.kube/config
+      changed_when: true # Всегда считать эту задачу измененной для простоты
 
     - name: Extract complete join command from kubeadm output
       ansible.builtin.set_fact:
