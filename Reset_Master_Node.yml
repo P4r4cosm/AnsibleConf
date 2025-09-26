@@ -1,22 +1,56 @@
 ---
-- name: Forcefully reset master node state
-  hosts: k8s_master
+- name: Complete Kubernetes Cluster Teardown
+  # Целимся на все ноды кластера
+  hosts: k8s_master, k8s_workers
   become: yes
-  gather_facts: no
+  # Игнорируем ошибки, чтобы плейбук продолжал работать,
+  # даже если какая-то часть уже была удалена
+  ignore_errors: yes
 
   tasks:
-    - name: Reset kubeadm
-      ansible.builtin.command: kubeadm reset --force
-      register: reset_status
-      changed_when: "'The reset process succeeded' in reset_status.stdout"
-      failed_when: "'The reset process succeeded' not in reset_status.stdout and 'could not find a Kubernetes cluster' not in reset_status.stderr"
+    - name: Reset the cluster state using kubeadm
+      ansible.builtin.command: kubeadm reset -f
+      changed_when: false # Эта команда всегда меняет состояние, но для нас это не важно
 
-    - name: Remove ALL kubernetes configuration files
+    - name: Stop and disable kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: stopped
+        enabled: no
+
+    - name: Uninstall Kubernetes packages
+      ansible.builtin.package:
+        name:
+          - kubeadm
+          - kubelet
+          - kubectl
+        state: absent
+        autoremove: yes # Удаляем также и зависимости
+        purge: yes      # Удаляем и конфигурационные файлы пакетов
+
+    - name: Remove Kubernetes configuration directories
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
-        - /etc/kubernetes/admin.conf
-        - /etc/kubernetes/kubelet.conf
-        - /etc/kubernetes/pki
-        - /home/admin/.kube # Удаляем и директорию пользователя
+        - /etc/kubernetes
+        - /var/lib/etcd
+        - /etc/cni/net.d
+        - /var/lib/kubelet
+        - /var/run/kubernetes
+        - /var/lib/cni/
+
+    - name: Remove user kubeconfig
+      ansible.builtin.file:
+        path: /home/admin/.kube # Замените 'admin' на вашего пользователя, если он другой
+        state: absent
+
+    - name: Prune all containers, pods, and images (optional, but recommended)
+      ansible.builtin.shell: |
+        crictl rmp -a -f
+        crictl rmi -a -f
+      changed_when: false
+      
+    - name: Final system cleanup
+      ansible.builtin.command: apt-get autoremove -y
+      changed_when: false
