@@ -84,13 +84,14 @@
         daemon_reload: yes
 
     - name: Add Kubernetes GPG key
-      ansible.builtin.apt_key:
-        url: https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0] }}.{{ k8s_version.split('.')[1] }}/deb/Release.key
-        state: present
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0] }}.{{ k8s_version.split('.')[1] }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.key
+        mode: '0644'
 
     - name: Add Kubernetes APT repository
       ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0] }}.{{ k8s_version.split('.')[1] }}/deb/ /"
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.key] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0] }}.{{ k8s_version.split('.')[1] }}/deb/ /"
         state: present
         filename: kubernetes
 
