@@ -22,6 +22,16 @@
       register: kubeadm_init
       changed_when: kubeadm_init.rc == 0
 
+    - name: DEBUG | Show full kubeadm_init result
+      ansible.builtin.debug:
+        var: kubeadm_init
+
+    - name: DEBUG | Fail playbook if stderr is not empty
+      ansible.builtin.fail:
+        msg: "Kubeadm init failed! Stderr: {{ kubeadm_init.stderr }}"
+      when: kubeadm_init.stderr is defined and kubeadm_init.stderr != ""
+
+      
     - name: Create .kube directory for admin user
       ansible.builtin.file:
         path: /home/admin/.kube
