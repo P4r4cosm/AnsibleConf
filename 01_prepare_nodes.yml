@@ -108,6 +108,16 @@
         state: present
         filename: kubernetes
 
+    - name: Unhold Kubernetes packages to allow installation/update
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: install
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+    # ------------------------------------
+
     - name: Install kubeadm, kubelet, kubectl
       ansible.builtin.apt:
         name:
@@ -115,6 +125,9 @@
           - kubeadm={{ k8s_version }}-*
           - kubectl={{ k8s_version }}-*
         state: present
+        # --- И ДОБАВЬТЕ ЭТОТ ПАРАМЕТР ---
+        allow_change_held_packages: yes
+        # --------------------------------
         allow_downgrade: yes
         update_cache: yes
 
