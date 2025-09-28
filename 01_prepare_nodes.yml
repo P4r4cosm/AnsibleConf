@@ -145,3 +145,24 @@
         name: kubelet
         state: started
         enabled: yes
+
+    - name: Ensure IPVS kernel modules are loaded
+    ansible.builtin.community.general.modprobe:
+      name: "{{ item }}"
+      state: present
+    loop:
+      - ip_vs
+      - ip_vs_rr
+      - ip_vs_wrr
+      - ip_vs_sh
+      - nf_conntrack
+
+- name: Create IPVS modules config file for autoload on boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s-ipvs.conf
+    content: |
+      ip_vs
+      ip_vs_rr
+      ip_vs_wrr
+      ip_vs_sh
+      nf_conntrack
