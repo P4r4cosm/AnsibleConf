@@ -2,13 +2,19 @@
   hosts: k8s_master
   become: yes
   tasks:
-    - name: Download and apply Calico manifest
-      ansible.builtin.shell:
-        cmd: "kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml"
-      environment: # <-- ИСПРАВЛЕНИЕ 1 (УЖЕ СДЕЛАНО)
-        KUBECONFIG: /etc/kubernetes/admin.conf
+    tasks:
+    - name: Copy correct Calico manifest to master
+      ansible.builtin.copy:
+        src: calico.yaml  # Наш локальный, исправленный файл
+        dest: /tmp/calico.yaml
 
-     # --- ДОБАВЬТЕ ЭТУ ЗАДАЧУ ---
+    - name: Apply the correct Calico manifest
+      ansible.builtin.shell:
+        cmd: "kubectl apply -f /tmp/calico.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+    
+    # Паузу можно оставить, она не помешает
     - name: Give Kubernetes a moment to create the pods
       ansible.builtin.pause:
         seconds: 15
