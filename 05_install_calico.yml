@@ -4,8 +4,10 @@
   become: yes
   tasks:
     - name: Download and apply Calico manifest
-      ansible.builtin.shell: |
-        kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+      ansible.builtin.shell:
+        cmd: "kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
 
     - name: Wait for Calico pods to be ready
       ansible.builtin.shell: |
