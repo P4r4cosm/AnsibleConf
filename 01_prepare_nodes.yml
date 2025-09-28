@@ -12,19 +12,20 @@
         path: "{{ item }}"
         state: absent
       loop:
-        - /etc/apt/sources.list.d/kubernetes.list          # Старый файл репозитория Kubernetes
-        - /etc/apt/sources.list.d/docker.list              # Старый файл репозитория Docker (на всякий случай)
-        - /etc/apt/keyrings/kubernetes-apt-keyring.gpg     # Старый ключ K8s 1
-        - /etc/apt/keyrings/kubernetes-apt-keyring.key     # Старый ключ K8s 2
-        - /etc/apt/keyrings/docker.gpg                     # Старый ключ Docker
+        - /etc/apt/sources.list.d/kubernetes.list
+        - /etc/apt/sources.list.d/docker.list
+        - /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        - /etc/apt/keyrings/kubernetes-apt-keyring.key
+        - /etc/apt/keyrings/docker.gpg
+
     - name: Disable swap
       ansible.builtin.shell: |
         swapoff -a
         sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
-    - name: Load required kernel modules
+    - name: Load required kernel modules for networking
       ansible.builtin.shell: |
-        cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+        cat <<EOF | sudo tee /etc/modules-load.d/k8s-networking.conf
         overlay
         br_netfilter
         EOF
@@ -40,7 +41,7 @@
         EOF
         sudo sysctl --system
 
-    - name: Install prerequisite packages for Docker and Kubernetes
+    - name: Install prerequisite packages
       ansible.builtin.apt:
         name:
           - apt-transport-https
@@ -51,7 +52,7 @@
         state: present
         update_cache: yes
 
-    - name: Create directory for GPG keys if it does not exist
+    - name: Create directory for GPG keys
       ansible.builtin.file:
         path: /etc/apt/keyrings
         state: directory
@@ -94,8 +95,6 @@
         enabled: yes
         daemon_reload: yes
 
-    
-
     - name: Add Kubernetes GPG key
       ansible.builtin.get_url:
         url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version.split('.')[0] }}.{{ k8s_version.split('.')[1] }}/deb/Release.key"
@@ -116,7 +115,6 @@
         - kubelet
         - kubeadm
         - kubectl
-    # ------------------------------------
 
     - name: Install kubeadm, kubelet, kubectl
       ansible.builtin.apt:
@@ -125,9 +123,7 @@
           - kubeadm={{ k8s_version }}-*
           - kubectl={{ k8s_version }}-*
         state: present
-        # --- И ДОБАВЬТЕ ЭТОТ ПАРАМЕТР ---
         allow_change_held_packages: yes
-        # --------------------------------
         allow_downgrade: yes
         update_cache: yes
 
@@ -139,30 +135,35 @@
         - kubelet
         - kubeadm
         - kubectl
-
+        
     - name: Start and enable kubelet
       ansible.builtin.systemd:
         name: kubelet
         state: started
         enabled: yes
 
+    # --- ВОТ ИСПРАВЛЕННЫЙ БЛОК ---
+    # Обратите внимание, что 'ansible.builtin.community.general.modprobe' и 'loop'
+    # являются параметрами задачи 'Ensure IPVS kernel modules are loaded',
+    # поэтому они должны иметь больший отступ.
     - name: Ensure IPVS kernel modules are loaded
-    ansible.builtin.community.general.modprobe:
-      name: "{{ item }}"
-      state: present
-    loop:
-      - ip_vs
-      - ip_vs_rr
-      - ip_vs_wrr
-      - ip_vs_sh
-      - nf_conntrack
+      ansible.builtin.community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - ip_vs
+        - ip_vs_rr
+        - ip_vs_wrr
+        - ip_vs_sh
+        - nf_conntrack
 
-- name: Create IPVS modules config file for autoload on boot
-  ansible.builtin.copy:
-    dest: /etc/modules-load.d/k8s-ipvs.conf
-    content: |
-      ip_vs
-      ip_vs_rr
-      ip_vs_wrr
-      ip_vs_sh
-      nf_conntrack
+    # Вторая задача должна быть на том же уровне отступа, что и первая.
+    - name: Create IPVS modules config file for autoload on boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s-ipvs.conf
+        content: |
+          ip_vs
+          ip_vs_rr
+          ip_vs_wrr
+          ip_vs_sh
+          nf_conntrack
