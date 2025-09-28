@@ -65,3 +65,26 @@
         delay: 10
         timeout: 120
         state: started
+
+
+        
+- name: Configure kubectl for admin user on master
+  hosts: k8s_master
+  become: yes
+  tasks:
+    - name: Create .kube directory
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0755'
+
+    - name: Copy admin.conf to user's kube config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/admin/.kube/config
+        remote_src: yes
+        owner: admin
+        group: admin
+        mode: '0600'
