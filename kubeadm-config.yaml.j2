@@ -12,6 +12,7 @@ apiServer:
   certSANs:
   - "{{ ansible_hostname }}"
   - "{{ ansible_default_ipv4.address }}" # Добавлено для большей надежности
+  - "127.0.0.1"  
 controlPlaneEndpoint: "{{ ansible_default_ipv4.address }}:6443"
 networking:
   podSubnet: "10.244.0.0/16" # Вы можете заменить это на {{ pod_network_cidr }}
