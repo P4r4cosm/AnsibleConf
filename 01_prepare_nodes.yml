@@ -147,7 +147,7 @@
     # являются параметрами задачи 'Ensure IPVS kernel modules are loaded',
     # поэтому они должны иметь больший отступ.
     - name: Ensure IPVS kernel modules are loaded
-      ansible.builtin.community.general.modprobe:
+      community.general.modprobe: # <-- ИСПРАВЛЕНО
         name: "{{ item }}"
         state: present
       loop:
