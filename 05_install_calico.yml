@@ -1,53 +1,77 @@
-- name: Install Calico network plugin
+---
+- name: Установка сетевого плагина Calico через оператор
   hosts: k8s_master
   become: yes
   tasks:
-    - name: Copy correct Calico manifest to master
-      ansible.builtin.copy:
-        src: calico.yaml  # Наш локальный, исправленный файл
-        dest: /tmp/calico.yaml
-
-    - name: Apply the correct Calico manifest
+    # Шаг 1: Устанавливаем сам оператор Tigera (Calico).
+    # Он будет следить за состоянием кластера и управлять установкой Calico.
+    - name: Применение манифеста оператора Tigera
       ansible.builtin.shell:
-        cmd: "kubectl apply -f /tmp/calico.yaml"
+        cmd: "kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/tigera-operator.yaml"
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
-    
-    # Паузу можно оставить, она не помешает
-    - name: Give Kubernetes a moment to create the pods
-      ansible.builtin.pause:
-        seconds: 15
-        
-    - name: Wait for Calico pods to be ready
+      register: operator_install
+      changed_when: "'created' in operator_install.stdout"
+      retries: 5
+      delay: 10
+      until: operator_install.rc == 0
+
+    # Шаг 2: Создаем кастомный ресурс, который говорит оператору,
+    # как именно нужно установить Calico (например, с каким диапазоном IP-адресов).
+    - name: Применение кастомных ресурсов для установки Calico
       ansible.builtin.shell:
-        cmd: "kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n kube-system --timeout=300s"
-      environment: # <-- ИСПРАВЛЕНИЕ 2 (НУЖНО ДОБАВИТЬ)
+        cmd: "kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/custom-resources.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cr_install
+      changed_when: "'created' in cr_install.stdout"
+      retries: 5
+      delay: 10
+      until: cr_install.rc == 0
+
+    # Шаг 3: Даем оператору достаточно времени, чтобы он начал создавать поды Calico.
+    # 60 секунд - надежный интервал.
+    - name: Ожидание, пока оператор начнет создавать поды
+      ansible.builtin.pause:
+        seconds: 60
+
+    # Шаг 4: Теперь ждем, пока ВСЕ поды в пространстве имен calico-system не будут готовы.
+    # Оператор создает компоненты именно там.
+    - name: Ожидание готовности всех подов в calico-system
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod --all -n calico-system --timeout=300s"
+      environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 
-    - name: Wait for all system pods to be ready
+    # Шаг 5: Также дождемся готовности всех системных подов в kube-system.
+    # Это гарантирует, что CoreDNS и другие компоненты тоже поднялись.
+    - name: Ожидание готовности всех подов в kube-system
       ansible.builtin.shell:
         cmd: "kubectl wait --for=condition=ready pod --all -n kube-system --timeout=300s"
-      environment: # <-- ИСПРАВЛЕНИЕ 3 (НУЖНО ДОБАВИТЬ)
+      environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 
-    - name: Check cluster status
+    # Финальные проверки (опционально, но полезно)
+    - name: Проверка статуса нод кластера
       ansible.builtin.shell:
         cmd: "kubectl get nodes -o wide"
-      environment: # <-- ИСПРАВЛЕНИЕ 4 (НУЖНО ДОБАВИТЬ)
+      environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: cluster_status
+      changed_when: false
 
-    - name: Display cluster status
+    - name: Отображение статуса нод кластера
       ansible.builtin.debug:
-        msg: "{{ cluster_status.stdout }}"
+        msg: "{{ cluster_status.stdout_lines }}"
 
-    - name: Check system pods
+    - name: Проверка системных подов
       ansible.builtin.shell:
-        cmd: "kubectl get pods -n kube-system"
-      environment: # <-- ИСПРАВЛЕНИЕ 5 (НУЖНО ДОБАВИТЬ)
+        cmd: "kubectl get pods --all-namespaces"
+      environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
-      register: system_pods
+      register: all_pods
+      changed_when: false
 
-    - name: Display system pods
+    - name: Отображение всех подов
       ansible.builtin.debug:
-        msg: "{{ system_pods.stdout }}"
+        msg: "{{ all_pods.stdout_lines }}"
