@@ -2,7 +2,6 @@
   hosts: k8s_master
   become: yes
   tasks:
-    tasks:
     - name: Copy correct Calico manifest to master
       ansible.builtin.copy:
         src: calico.yaml  # Наш локальный, исправленный файл
