@@ -1,0 +1,44 @@
+---
+- name: Join worker nodes to Kubernetes cluster
+  hosts: k8s_workers
+  become: yes
+  vars:
+    # Автоматически берем первый хост из группы k8s_master
+    master_node: "{{ groups['k8s_master'][0] }}"
+
+  tasks:
+    # 1. Читаем токен с мастера (делаем это 1 раз для всего плейбука)
+    - name: Read join command from master node
+      slurp:
+        src: /tmp/k8s_join_command.txt
+      register: join_command_file
+      delegate_to: "{{ master_node }}"
+      run_once: yes
+
+    # 2. Выполняем команду присоединения
+    - name: Join worker to cluster
+      shell: "{{ join_command_file['content'] | b64decode }}"
+      args:
+        # Эта опция говорит Ansible: "Если файл существует, значит задача уже выполнена, пропускаем"
+        creates: /etc/kubernetes/kubelet.conf
+
+    # 3. Ждем появления конфига (значит kubeadm отработал)
+    - name: Wait for node to register (kubelet config)
+      wait_for:
+        path: /etc/kubernetes/kubelet.conf
+        timeout: 60
+
+    # 4. Проверка (выводим список нод с мастера)
+    # Используем environment, чтобы точно найти конфиг админа
+    - name: Verify cluster nodes from master
+      shell: kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cluster_nodes
+      delegate_to: "{{ master_node }}"
+      run_once: yes
+      changed_when: false
+
+    - name: Display current cluster status
+      debug:
+        msg: "{{ cluster_nodes.stdout_lines }}"
