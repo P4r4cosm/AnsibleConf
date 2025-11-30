@@ -1,4 +1,7 @@
-- hosts: k8s_all
+---
+- name: Ping Test
+  hosts: all
+  gather_facts: no
   tasks:
-    - name: Test connection
+    - name: Check connectivity
       ping:
