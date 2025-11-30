@@ -70,18 +70,28 @@ jobs:
         
     - name: Deploy to Kubernetes
       run: |
-        # 1. Копируем конфиг в текущую папку
+        # 1. Сбрасываем прокси (Самое важное!)
+        unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+        export NO_PROXY=localhost,127.0.0.1,10.96.0.1
+
+        # 2. Копируем конфиг
         cp /home/admin/.kube/config ./kubeconfig_local
         
-        # 2. Меняем IP сервера на 127.0.0.1 (работает через sed)
-        # Это заставит kubectl ходить через локальный интерфейс, минуя сетевые проблемы
+        # 3. Принудительно ставим localhost
         sed -i 's|server: https://.*:6443|server: https://127.0.0.1:6443|' ./kubeconfig_local
         
-        # 3. Говорим kubectl использовать наш исправленный конфиг
+        # 4. Отключаем проверку SSL в конфиге (чтобы не было ошибок сертификата при смене IP)
+        kubectl config --kubeconfig=./kubeconfig_local set-cluster default-cluster --insecure-skip-tls-verify=true
+
+        # 5. Применяем конфиг
         export KUBECONFIG=$(pwd)/kubeconfig_local
 
-        # Проверка связи (чтобы мы увидели в логах, что всё ок)
+        # Диагностика: проверяем связь
+        echo "Testing connection..."
+        curl -k -v https://127.0.0.1:6443/version || true
         kubectl cluster-info
+
+        # --- Основные команды деплоя ---
         
         # Применяем манифесты
         kubectl apply -f k8s-manifests/ -n ${{ env.K8S_NAMESPACE }}
