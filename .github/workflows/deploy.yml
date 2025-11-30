@@ -70,6 +70,7 @@ jobs:
 
     - name: Deploy to Kubernetes
       run: |
+        export KUBECONFIG=/home/admin/.kube/config
         # Применяем манифесты из папки
         kubectl apply -f k8s-manifests/ -n ${{ env.K8S_NAMESPACE }}
         
