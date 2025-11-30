@@ -1,0 +1,46 @@
+---
+- name: Install Calico network plugin
+  hosts: k8s_master
+  become: yes
+  
+  # Явно указываем kubectl, какой конфиг использовать
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    - name: Download and apply Calico manifest
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+      register: calico_install
+      changed_when: "'created' in calico_install.stdout or 'configured' in calico_install.stdout"
+
+    # Даем контроллеру пару секунд, чтобы создать поды, иначе wait может упасть с ошибкой "no matching resources"
+    - name: Pause for 10 seconds to let Calico pods initialize
+      pause:
+        seconds: 10
+
+    - name: Wait for Calico pods to be ready
+      shell: |
+        kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n kube-system --timeout=300s
+      register: calico_wait
+      # Если поды уже запущены, kubectl wait может вернуть ошибку или сразу ок. 
+      # Игнорируем ошибки, если вдруг поды перезапускаются.
+      ignore_errors: yes
+
+    - name: Check cluster nodes status
+      shell: kubectl get nodes -o wide
+      register: cluster_status
+      changed_when: false
+
+    - name: Display cluster nodes
+      debug:
+        msg: "{{ cluster_status.stdout_lines }}"
+
+    - name: Check system pods status
+      shell: kubectl get pods -n kube-system
+      register: system_pods
+      changed_when: false
+
+    - name: Display system pods
+      debug:
+        msg: "{{ system_pods.stdout_lines }}"
