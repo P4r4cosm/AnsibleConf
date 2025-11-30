@@ -3,31 +3,27 @@
   hosts: all
   become: yes
   vars:
-    # МЕНЯЕМ ВЕРСИЮ НА 1.30 (1.28 конфликтует с Debian 13)
+    # Версия K8s 1.30 (наиболее стабильная для современных ОС)
     k8s_major_version: "v1.30"
     k8s_package_version: "1.30.*"
   
   tasks:
-    # --- БЛОК ЛЕЧЕНИЯ DEBIAN 13 ---
-    - name: Fix corrupted apt lists (Critical for Debian 13)
+    # 1. Агрессивная очистка кэша (через shell, чтобы не падал python)
+    - name: Nuclearly clean apt cache
       shell: |
         rm -rf /var/lib/apt/lists/*
+        rm -rf /etc/apt/sources.list.d/*
         apt-get clean
       args:
         warn: false
       ignore_errors: yes
 
-    - name: Update apt cache manually (bypass python-apt module first run)
-      shell: apt-get update
-      # Игнорируем ошибки, если какой-то репо недоступен, главное оживить базу
-      ignore_errors: yes 
-    # ------------------------------
-
+    # 2. Стандартные настройки системы
     - name: Disable swap (runtime)
       command: swapoff -a
       changed_when: false
 
-    - name: Disable swap (permanent in /etc/fstab)
+    - name: Disable swap (permanent)
       replace:
         path: /etc/fstab
         regexp: '^([^#].*?\sswap\s+.*)$'
@@ -48,7 +44,7 @@
         - overlay
         - br_netfilter
 
-    - name: Configure sysctl params for Kubernetes
+    - name: Configure sysctl params
       ansible.posix.sysctl:
         name: "{{ item.name }}"
         value: "{{ item.value }}"
@@ -60,7 +56,12 @@
         - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
         - { name: 'net.ipv4.ip_forward', value: '1' }
 
-    - name: Install required prerequisites
+    # 3. Обновляем кэш вручную (первый раз) и ставим базу
+    - name: Initial apt update and basics
+      shell: apt-get update
+      ignore_errors: yes # Игнорируем ошибки отсутствующих репо
+
+    - name: Install basic packages
       apt:
         name:
           - apt-transport-https
@@ -68,12 +69,11 @@
           - curl
           - gnupg
           - lsb-release
-          # Добавляем sudo, если его вдруг нет на чистой системе
-          - sudo 
+          - sudo
         state: present
-        update_cache: yes
+        update_cache: no # Не обновляем тут, сделали выше
 
-    # --- Настройка Docker ---
+    # --- DOCKER (Ручная установка без apt_repository) ---
     
     - name: Create keyrings directory
       file:
@@ -84,58 +84,50 @@
     - name: Download Docker GPG key
       shell: |
         curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
-      args:
-        creates: /etc/apt/keyrings/docker.gpg
 
-    - name: Add Docker repository
-      apt_repository:
-        # Принудительно используем bookworm (Debian 12 stable) для Docker
-        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable"
-        state: present
-        filename: docker
+    - name: Create Docker repository file manually
+      copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: |
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable
+
+    # --- KUBERNETES (Ручная установка без apt_repository) ---
+
+    - name: Download Kubernetes GPG key
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_major_version }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --yes
+      
+    - name: Create Kubernetes repository file manually
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        content: |
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_major_version }}/deb/ /
+
+    # --- ФИНАЛЬНАЯ УСТАНОВКА ---
+
+    - name: Final apt update
+      shell: apt-get update
+      # Теперь кэш должен быть чистым и правильным
 
     - name: Install containerd
       apt:
         name: containerd.io
         state: present
-        update_cache: yes
 
-    - name: Configure containerd default config
+    - name: Configure containerd
       shell: |
         mkdir -p /etc/containerd
         containerd config default > /etc/containerd/config.toml
-      args:
-        creates: /etc/containerd/config.toml
-
-    - name: Update SystemdCgroup in containerd config
-      replace:
-        path: /etc/containerd/config.toml
-        regexp: 'SystemdCgroup = false'
-        replace: 'SystemdCgroup = true'
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
       notify: Restart containerd
 
-    # --- Настройка Kubernetes (НОВЫЙ РЕПОЗИТОРИЙ) ---
-
-    - name: Download Kubernetes GPG key
-      shell: |
-        # Удаляем старый ключ если был, чтобы не конфликтовать
-        rm -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-        curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_major_version }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg --yes
-      
-    - name: Add Kubernetes repository
-      apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_major_version }}/deb/ /"
-        state: present
-        filename: kubernetes
-
-    - name: Install kubeadm, kubelet, kubectl
+    - name: Install K8s tools
       apt:
         name:
           - kubelet
           - kubeadm
           - kubectl
         state: present
-        update_cache: yes
         allow_downgrade: yes
 
     - name: Hold Kubernetes packages
@@ -147,7 +139,7 @@
         - kubeadm
         - kubectl
 
-    - name: Enable and start kubelet
+    - name: Enable kubelet
       systemd:
         name: kubelet
         state: started
