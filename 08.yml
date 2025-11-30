@@ -1,0 +1,63 @@
+---
+- name: Deploy Hello-Kubernetes Application
+  hosts: k8s_master
+  become: yes
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    - name: Apply Deployment and Service manifest
+      shell: |
+        cat <<EOF | kubectl apply -f -
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: hello-kubernetes
+        spec:
+          replicas: 3
+          selector:
+            matchLabels:
+              app: hello-kubernetes
+          template:
+            metadata:
+              labels:
+                app: hello-kubernetes
+            spec:
+              containers:
+              - name: hello-kubernetes
+                image: paulbouwer/hello-kubernetes:1.10
+                ports:
+                - containerPort: 8080
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: hello-kubernetes-service
+        spec:
+          ports:
+          - port: 80
+            targetPort: 8080
+          selector:
+            app: hello-kubernetes
+        EOF
+      register: deploy_app
+      changed_when: "'created' in deploy_app.stdout or 'configured' in deploy_app.stdout"
+
+    - name: Wait for application pods to be ready
+      shell: |
+        kubectl wait --for=condition=ready pod -l app=hello-kubernetes --timeout=120s
+      register: wait_app
+      retries: 5
+      delay: 5
+      until: wait_app.rc == 0
+
+    - name: Get Service Info
+      shell: kubectl get svc hello-kubernetes-service
+      register: svc_info
+      changed_when: false
+
+    - name: Display Application Status
+      debug:
+        msg: 
+          - "Application deployed successfully."
+          - "{{ svc_info.stdout }}"
