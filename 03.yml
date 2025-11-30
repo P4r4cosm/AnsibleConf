@@ -1,66 +1,77 @@
 ---
-- name: Setup kubectl access on ansible control node (localhost)
+- name: Setup kubectl access on ansible control node
   hosts: k8s_master
   become: yes
   vars:
-    # Версия kubectl должна совпадать с версией кластера
     k8s_version: "v1.30.0"
-    # Имя пользователя на удаленном мастере (откуда забираем конфиг)
-    remote_user_name: "admin"
     remote_user_home: "/home/admin"
+    # Определяем путь к домашней папке на локальной машине (Ansible)
+    local_home: "{{ lookup('env', 'HOME') }}"
+    # Путь, куда положим kubectl (в папку bin внутри home)
+    local_bin: "{{ lookup('env', 'HOME') }}/.local/bin"
 
   tasks:
+    # 1. Создаем папку для конфига (локально)
     - name: Ensure local .kube directory exists
       file:
-        path: "{{ lookup('env', 'HOME') }}/.kube"
+        path: "{{ local_home }}/.kube"
         state: directory
         mode: 0755
       delegate_to: localhost
       become: no
 
-    - name: Copy kubeconfig from Master to Localhost
+    # 2. Создаем папку для бинарников (локально)
+    - name: Ensure local bin directory exists
+      file:
+        path: "{{ local_bin }}"
+        state: directory
+        mode: 0755
+      delegate_to: localhost
+      become: no
+
+    # 3. Скачиваем конфиг с мастера
+    - name: Copy kubeconfig from Master
       fetch:
         src: "{{ remote_user_home }}/.kube/config"
-        dest: "{{ lookup('env', 'HOME') }}/.kube/config"
+        dest: "{{ local_home }}/.kube/config"
         flat: yes
       run_once: yes
 
+    # 4. Правим IP в конфиге
     - name: Update kubeconfig with Master Node IP
       replace:
-        path: "{{ lookup('env', 'HOME') }}/.kube/config"
+        path: "{{ local_home }}/.kube/config"
         regexp: 'server: https://127.0.0.1:6443'
-        # Берем IP адрес мастера, к которому сейчас подключились
         replace: "server: https://{{ ansible_default_ipv4.address }}:6443"
       delegate_to: localhost
       become: no
 
     - name: Set correct permissions on local kubeconfig
       file:
-        path: "{{ lookup('env', 'HOME') }}/.kube/config"
+        path: "{{ local_home }}/.kube/config"
         mode: 0600
       delegate_to: localhost
       become: no
 
-    # --- УСТАНОВКА KUBECTL НА LOCALHOST ---
-    # Делаем это через скачивание бинарника, чтобы не зависеть от настроек apt на вашем ноутбуке/сервере
-    
-    - name: Download kubectl binary (locally)
+    # 5. Скачиваем kubectl в пользовательскую папку (БЕЗ SUDO)
+    - name: Download kubectl binary to local user bin
       get_url:
         url: "https://dl.k8s.io/release/{{ k8s_version }}/bin/linux/amd64/kubectl"
-        dest: /usr/local/bin/kubectl
+        dest: "{{ local_bin }}/kubectl"
         mode: '0755'
       delegate_to: localhost
-      become: yes
-      # Этот шаг может не сработать, если у вас нет sudo на локальной машине.
-      # Если sudo нет, можно поменять путь на "{{ lookup('env', 'HOME') }}/.local/bin/kubectl"
-      ignore_errors: yes
+      become: no
 
+    # 6. Проверяем работу, вызывая файл по полному пути
     - name: Verify kubectl access
-      shell: kubectl get nodes
+      shell: "{{ local_bin }}/kubectl get nodes"
       register: kubectl_nodes
       delegate_to: localhost
       become: no
       changed_when: false
+      # Явно указываем, где искать конфиг, на всякий случай
+      environment:
+        KUBECONFIG: "{{ local_home }}/.kube/config"
 
     - name: Display nodes info
       debug:
