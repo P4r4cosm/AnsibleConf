@@ -1,0 +1,67 @@
+---
+- name: Setup kubectl access on ansible control node (localhost)
+  hosts: k8s_master
+  become: yes
+  vars:
+    # Версия kubectl должна совпадать с версией кластера
+    k8s_version: "v1.30.0"
+    # Имя пользователя на удаленном мастере (откуда забираем конфиг)
+    remote_user_name: "admin"
+    remote_user_home: "/home/admin"
+
+  tasks:
+    - name: Ensure local .kube directory exists
+      file:
+        path: "{{ lookup('env', 'HOME') }}/.kube"
+        state: directory
+        mode: 0755
+      delegate_to: localhost
+      become: no
+
+    - name: Copy kubeconfig from Master to Localhost
+      fetch:
+        src: "{{ remote_user_home }}/.kube/config"
+        dest: "{{ lookup('env', 'HOME') }}/.kube/config"
+        flat: yes
+      run_once: yes
+
+    - name: Update kubeconfig with Master Node IP
+      replace:
+        path: "{{ lookup('env', 'HOME') }}/.kube/config"
+        regexp: 'server: https://127.0.0.1:6443'
+        # Берем IP адрес мастера, к которому сейчас подключились
+        replace: "server: https://{{ ansible_default_ipv4.address }}:6443"
+      delegate_to: localhost
+      become: no
+
+    - name: Set correct permissions on local kubeconfig
+      file:
+        path: "{{ lookup('env', 'HOME') }}/.kube/config"
+        mode: 0600
+      delegate_to: localhost
+      become: no
+
+    # --- УСТАНОВКА KUBECTL НА LOCALHOST ---
+    # Делаем это через скачивание бинарника, чтобы не зависеть от настроек apt на вашем ноутбуке/сервере
+    
+    - name: Download kubectl binary (locally)
+      get_url:
+        url: "https://dl.k8s.io/release/{{ k8s_version }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+      delegate_to: localhost
+      become: yes
+      # Этот шаг может не сработать, если у вас нет sudo на локальной машине.
+      # Если sudo нет, можно поменять путь на "{{ lookup('env', 'HOME') }}/.local/bin/kubectl"
+      ignore_errors: yes
+
+    - name: Verify kubectl access
+      shell: kubectl get nodes
+      register: kubectl_nodes
+      delegate_to: localhost
+      become: no
+      changed_when: false
+
+    - name: Display nodes info
+      debug:
+        msg: "{{ kubectl_nodes.stdout_lines }}"
