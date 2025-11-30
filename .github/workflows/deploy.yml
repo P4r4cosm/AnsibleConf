@@ -67,14 +67,26 @@ jobs:
         mkdir -p ~/.kube
         echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
         chmod 600 ~/.kube/config
-
+        
     - name: Deploy to Kubernetes
       run: |
-        export KUBECONFIG=/home/admin/.kube/config
-        # Применяем манифесты из папки
+        # 1. Копируем конфиг в текущую папку
+        cp /home/admin/.kube/config ./kubeconfig_local
+        
+        # 2. Меняем IP сервера на 127.0.0.1 (работает через sed)
+        # Это заставит kubectl ходить через локальный интерфейс, минуя сетевые проблемы
+        sed -i 's|server: https://.*:6443|server: https://127.0.0.1:6443|' ./kubeconfig_local
+        
+        # 3. Говорим kubectl использовать наш исправленный конфиг
+        export KUBECONFIG=$(pwd)/kubeconfig_local
+
+        # Проверка связи (чтобы мы увидели в логах, что всё ок)
+        kubectl cluster-info
+        
+        # Применяем манифесты
         kubectl apply -f k8s-manifests/ -n ${{ env.K8S_NAMESPACE }}
         
-        # Обновляем образ принудительно
+        # Обновляем образ
         kubectl set image deployment/django-deployment django-app=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest -n ${{ env.K8S_NAMESPACE }}
         
         # Ждем раскатки
