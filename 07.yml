@@ -1,0 +1,37 @@
+---
+- name: Install Nginx Ingress Controller
+  hosts: k8s_master
+  become: yes
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    - name: Apply Nginx Ingress manifest
+      shell: |
+        # Используем версию 1.10.1, так как она совместима с K8s 1.30+
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/baremetal/deploy.yaml
+      register: ingress_install
+      changed_when: "'created' in ingress_install.stdout or 'configured' in ingress_install.stdout"
+
+    - name: Wait for Ingress Controller pod to be ready
+      shell: |
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=120s
+      register: wait_ingress
+      retries: 5
+      delay: 10
+      until: wait_ingress.rc == 0
+
+    - name: Get Ingress Service NodePorts
+      shell: kubectl get svc -n ingress-nginx ingress-nginx-controller
+      register: ingress_svc
+      changed_when: false
+
+    - name: Display Ingress Ports
+      debug:
+        msg: 
+          - "Ingress Controller installed successfully."
+          - "Service Info:"
+          - "{{ ingress_svc.stdout_lines }}"
