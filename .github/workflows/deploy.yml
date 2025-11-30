@@ -70,25 +70,31 @@ jobs:
         
     - name: Deploy to Kubernetes
       run: |
-        # 1. Сбрасываем прокси
+        # Сбрасываем прокси и настраиваем Kubeconfig
         unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
-        
-        # 2. Копируем конфиг и меняем IP на localhost
         cp /home/admin/.kube/config ./kubeconfig_local
         sed -i 's|server: https://.*:6443|server: https://127.0.0.1:6443|' ./kubeconfig_local
         export KUBECONFIG=$(pwd)/kubeconfig_local
 
-        # 3. Проверяем связь, ИГНОРИРУЯ ОШИБКУ СЕРТИФИКАТА
-        echo "Testing connection..."
-        kubectl cluster-info --insecure-skip-tls-verify
-        
-        # --- Основные команды деплоя с флагом --insecure-skip-tls-verify ---
-        
-        # Применяем манифесты
+        # --- Основные команды деплоя ---
+
+        # ШАГ 1: Создаем ТОЛЬКО namespace, чтобы он точно успел появиться
+        echo "Creating namespace..."
+        kubectl apply -f k8s-manifests/namespace.yaml --insecure-skip-tls-verify
+
+        # Даем API серверу пару секунд на обработку
+        sleep 5
+
+        # ШАГ 2: Теперь применяем ВСЁ ОСТАЛЬНОЕ в уже существующий namespace
+        echo "Applying other manifests..."
         kubectl apply -f k8s-manifests/ -n ${{ env.K8S_NAMESPACE }} --insecure-skip-tls-verify
         
         # Обновляем образ
+        echo "Setting new image..."
         kubectl set image deployment/django-deployment django-app=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest -n ${{ env.K8S_NAMESPACE }} --insecure-skip-tls-verify
         
         # Ждем раскатки
+        echo "Waiting for rollout..."
         kubectl rollout status deployment/django-deployment -n ${{ env.K8S_NAMESPACE }} --timeout=300s --insecure-skip-tls-verify
+
+        echo "Deployment successful!"
