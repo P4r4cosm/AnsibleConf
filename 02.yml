@@ -1,0 +1,70 @@
+---
+- name: Initialize Kubernetes cluster on master node
+  hosts: k8s_master
+  become: yes
+  vars:
+    # Версия должна совпадать с мажорной версией из 1-го плейбука
+    k8s_version: "1.30.0"
+    # CIDR оставляем как в методите, но для Calico чаще используется 192.168.0.0/16.
+    # Если в шаге установки Calico манифест стандартный, 10.244.x.x тоже подойдет, если настроено.
+    pod_network_cidr: "10.244.0.0/16"
+    # Пользователь, под которым мы будем работать с kubectl (из методички это admin)
+    k8s_admin_user: "admin"
+    k8s_admin_home: "/home/admin"
+
+  tasks:
+    - name: Initialize cluster with kubeadm
+      shell: |
+        kubeadm init \
+          --pod-network-cidr {{ pod_network_cidr }} \
+          --service-cidr 10.96.0.0/12 \
+          --kubernetes-version v{{ k8s_version }} \
+          --apiserver-advertise-address {{ ansible_default_ipv4.address }} \
+          --apiserver-cert-extra-sans {{ ansible_hostname }}
+      register: kubeadm_init
+      # creates гарантирует, что команда не выполнится повторно, если кластер жив
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: Ensure .kube directory exists for admin user
+      file:
+        path: "{{ k8s_admin_home }}/.kube"
+        state: directory
+        owner: "{{ k8s_admin_user }}"
+        group: "{{ k8s_admin_user }}"
+        mode: 0755
+
+    - name: Copy admin config to user directory
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ k8s_admin_home }}/.kube/config"
+        remote_src: yes
+        owner: "{{ k8s_admin_user }}"
+        group: "{{ k8s_admin_user }}"
+        mode: 0600
+
+    # --- ВАЖНОЕ ИЗМЕНЕНИЕ ---
+    # Вместо парсинга логов (который ломается при перезапуске),
+    # мы просим кластер выдать нам свежую команду для присоединения.
+    - name: Generate fresh join command
+      shell: kubeadm token create --print-join-command
+      register: join_command_raw
+
+    - name: Save join command to file
+      copy:
+        content: "{{ join_command_raw.stdout }}"
+        dest: /tmp/k8s_join_command.txt
+        owner: "{{ k8s_admin_user }}"
+        group: "{{ k8s_admin_user }}"
+        mode: 0644
+
+    - name: Display join command for verification
+      debug:
+        msg: "Join command: {{ join_command_raw.stdout }}"
+
+    - name: Wait for Kubernetes API to be ready
+      wait_for:
+        host: "{{ ansible_default_ipv4.address }}"
+        port: 6443
+        delay: 10
+        timeout: 300  # Увеличил до 5 минут, на слабых VM бывает долго
