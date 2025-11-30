@@ -1,0 +1,65 @@
+---
+- name: Verify Kubernetes cluster functionality
+  hosts: k8s_master
+  become: yes
+  
+  # Гарантируем, что kubectl видит конфиг админа
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    # 1. Создаем namespace (безопасно, если уже есть)
+    - name: Create test namespace
+      shell: |
+        kubectl create namespace test --dry-run=client -o yaml | kubectl apply -f -
+
+    # 2. Создаем деплоймент (безопасно перезаписываем)
+    - name: Deploy test nginx application
+      shell: |
+        kubectl create deployment nginx-test --image=nginx:alpine -n test --dry-run=client -o yaml | kubectl apply -f -
+
+    # 3. Создаем сервис (безопасно)
+    # Используем create service clusterip вместо expose для удобства dry-run
+    - name: Expose deployment as service
+      shell: |
+        kubectl create service clusterip nginx-test --tcp=80:80 -n test --dry-run=client -o yaml | kubectl apply -f -
+
+    # 4. Ждем готовности подов
+    # Добавили небольшую паузу и retries, так как создание контейнера занимает время
+    - name: Wait for test pod to be ready
+      shell: |
+        kubectl wait --for=condition=ready pod -l app=nginx-test -n test --timeout=120s
+      register: wait_result
+      retries: 5
+      delay: 5
+      until: wait_result.rc == 0
+
+    - name: Check test pod status
+      shell: kubectl get pods -n test -o wide
+      register: test_pods
+      changed_when: false
+
+    - name: Display test pods
+      debug:
+        msg: "{{ test_pods.stdout_lines }}"
+
+    # 5. Тестируем сеть внутри кластера (Pod -> Service)
+    - name: Test service connectivity via curl
+      shell: |
+        kubectl run test-curl --image=curlimages/curl:latest -n test -i --rm --restart=Never -- curl -m 5 -sI http://nginx-test:80
+      register: curl_test
+      ignore_errors: yes # Чтобы плейбук не падал, если тест не прошел, и мы увидели вывод
+
+    - name: Display curl test result
+      debug:
+        msg: 
+          - "Return Code: {{ curl_test.rc }}"
+          - "Output: {{ curl_test.stdout }}"
+          - "Error: {{ curl_test.stderr }}"
+
+    # 6. Очистка (удаляем namespace, удалится и всё внутри)
+    - name: Cleanup test resources
+      shell: kubectl delete namespace test
+      # Удаляем только если тест прошел успешно. 
+      # Если curl упал, лучше оставить поды для ручной отладки.
+      when: curl_test.rc == 0
