@@ -1,6 +1,6 @@
 ---
 - name: Prepare all Kubernetes nodes
-  hosts: k8s_all
+  hosts: all
   become: yes
   vars:
     # Версия K8s. Важно: для новых репозиториев нужно указывать мажорную версию в URL
