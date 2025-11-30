@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: p4r4cosm/ansibleconf
   K8S_NAMESPACE: django-app
 
 jobs:
