@@ -1,100 +1,68 @@
-name: Deploy Django App to Kubernetes
+name: Build, Push to Private Registry and Deploy with Helm
+
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: p4r4cosm/ansibleconf
-  K8S_NAMESPACE: django-app
+  # IP вашего приватного реджистри
+  REGISTRY: "192.168.31.158:30500"
+  IMAGE_NAME: "django-app"
+  K8S_NAMESPACE: "django-app"
+  HELM_RELEASE: "django-app-production"
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    # Тесты пропускаем для скорости в примере, или раскомментируй
-    # - name: Run tests
-    #   run: python manage.py test
-
   build-and-push:
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    # ВАЖНО: используем self-hosted раннер, так как GitHub не видит ваш локальный IP
+    runs-on: self-hosted
     steps:
-    - uses: actions/checkout@v4
-    - name: Log in to Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    - name: Extract metadata for Docker
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        tags: type=sha,prefix={{branch}}-
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-        labels: ${{ steps.meta.outputs.labels }}
+      - uses: actions/checkout@v4
 
-  deploy:
+      # Настройка Docker Buildx (нужно для кэширования и работы драйверов)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      # Логинимся в локальный реджистри (пароль берем явно или через секреты, 
+      # для простоты в лабе можно хардкодом, но лучше secrets.REGISTRY_PASSWORD)
+      - name: Log in to private registry
+        run: docker login ${{ env.REGISTRY }} -u admin -p admin123
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy-with-helm:
     needs: build-and-push
-    runs-on: self-hosted  # <--- ВАЖНО: запускаем на твоем раннере
-    if: github.ref == 'refs/heads/main'
+    runs-on: self-hosted
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Kubeconfig
-      run: |
-        mkdir -p ~/.kube
-        echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
-        chmod 600 ~/.kube/config
-        
-    - name: Deploy to Kubernetes
-      run: |
-        # Сбрасываем прокси и настраиваем Kubeconfig
-        unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
-        cp /home/admin/.kube/config ./kubeconfig_local
-        sed -i 's|server: https://.*:6443|server: https://127.0.0.1:6443|' ./kubeconfig_local
-        export KUBECONFIG=$(pwd)/kubeconfig_local
+      - uses: actions/checkout@v4
 
-        # --- Основные команды деплоя ---
+      # Установка Helm (если вдруг нет на раннере)
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        continue-on-error: true # Если уже стоит, не падать
 
-        # ШАГ 1: Создаем ТОЛЬКО namespace, чтобы он точно успел появиться
-        echo "Creating namespace..."
-        kubectl apply -f k8s-manifests/namespace.yaml --insecure-skip-tls-verify
+      - name: Deploy with Helm
+        run: |
+          # 1. Создаем namespace если нет
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          
+          # 2. Обновляем зависимости чарта (на всякий случай)
+          # Используем OCI, чтобы не было ошибки 403
+          helm dependency update ./django-app-chart --skip-refresh
 
-        # Даем API серверу пару секунд на обработку
-        sleep 5
-
-        # ШАГ 2: Теперь применяем ВСЁ ОСТАЛЬНОЕ в уже существующий namespace
-        echo "Applying other manifests..."
-        kubectl apply -f k8s-manifests/ -n ${{ env.K8S_NAMESPACE }} --insecure-skip-tls-verify
-        
-        # Обновляем образ
-        echo "Setting new image..."
-        kubectl set image deployment/django-deployment django-app=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest -n ${{ env.K8S_NAMESPACE }} --insecure-skip-tls-verify
-        
-        # Ждем раскатки
-        echo "Waiting for rollout..."
-        kubectl rollout status deployment/django-deployment -n ${{ env.K8S_NAMESPACE }} --timeout=300s --insecure-skip-tls-verify
-
-        echo "Deployment successful!"
+          # 3. Деплоим/Обновляем
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./django-app-chart \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 300s
