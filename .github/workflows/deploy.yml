@@ -22,8 +22,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
+          # Эта опция позволяет сборщику видеть сеть хоста
           driver-opts: network=host
-
+          # А вот это самое важное - разрешаем HTTP для твоего IP
+          buildkitd-config-inline: |
+            [registry."192.168.31.158:30500"]
+              http = true
+              insecure = true
       # Логинимся в локальный реджистри (пароль берем явно или через секреты, 
       # для простоты в лабе можно хардкодом, но лучше secrets.REGISTRY_PASSWORD)
       - name: Log in to private registry
