@@ -1,0 +1,48 @@
+global:
+  namespace: django-app
+
+image:
+  # IP вашего реестра
+  repository: "192.168.31.158:30500/django-app"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+app:
+  replicas: 3
+  serviceType: ClusterIP
+  port: 8000
+  env:
+    DEBUG: "False"
+    ALLOWED_HOSTS: "*"
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: django-app.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Настройки для Sub-chart PostgreSQL
+postgresql:
+  enabled: true
+  auth:
+    database: "django_app"
+    username: "django_user"
+    password: "postgres_password_123"
+  persistence:
+    enabled: true
+    size: 5Gi
+
+monitoring:
+  enabled: true
