@@ -1,0 +1,100 @@
+name: Deploy Django App to Kubernetes
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: p4r4cosm/ansibleconf
+  K8S_NAMESPACE: django-app
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    # Тесты пропускаем для скорости в примере, или раскомментируй
+    # - name: Run tests
+    #   run: python manage.py test
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Extract metadata for Docker
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: type=sha,prefix={{branch}}-
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: self-hosted  # <--- ВАЖНО: запускаем на твоем раннере
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Kubeconfig
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
+        
+    - name: Deploy to Kubernetes
+      run: |
+        # Сбрасываем прокси и настраиваем Kubeconfig
+        unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
+        cp /home/admin/.kube/config ./kubeconfig_local
+        sed -i 's|server: https://.*:6443|server: https://127.0.0.1:6443|' ./kubeconfig_local
+        export KUBECONFIG=$(pwd)/kubeconfig_local
+
+        # --- Основные команды деплоя ---
+
+        # ШАГ 1: Создаем ТОЛЬКО namespace, чтобы он точно успел появиться
+        echo "Creating namespace..."
+        kubectl apply -f k8s-manifests/namespace.yaml --insecure-skip-tls-verify
+
+        # Даем API серверу пару секунд на обработку
+        sleep 5
+
+        # ШАГ 2: Теперь применяем ВСЁ ОСТАЛЬНОЕ в уже существующий namespace
+        echo "Applying other manifests..."
+        kubectl apply -f k8s-manifests/ -n ${{ env.K8S_NAMESPACE }} --insecure-skip-tls-verify
+        
+        # Обновляем образ
+        echo "Setting new image..."
+        kubectl set image deployment/django-deployment django-app=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest -n ${{ env.K8S_NAMESPACE }} --insecure-skip-tls-verify
+        
+        # Ждем раскатки
+        echo "Waiting for rollout..."
+        kubectl rollout status deployment/django-deployment -n ${{ env.K8S_NAMESPACE }} --timeout=300s --insecure-skip-tls-verify
+
+        echo "Deployment successful!"
