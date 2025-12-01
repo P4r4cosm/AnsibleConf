@@ -43,6 +43,19 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
+      - name: Create ImagePullSecret
+        run: |
+          # Создаем namespace если нет (на всякий случай)
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Создаем секрет с данными для входа в Registry
+          kubectl create secret docker-registry regcred \
+            --docker-server=${{ env.REGISTRY }} \
+            --docker-username=admin \
+            --docker-password=admin123 \
+            --namespace=${{ env.K8S_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
   deploy-with-helm:
     needs: build-and-push
     runs-on: self-hosted
