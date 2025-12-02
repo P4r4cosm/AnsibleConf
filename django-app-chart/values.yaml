@@ -30,7 +30,9 @@ resources:
 
 ingress:
   enabled: true
-  className: "nginx"
+    annotations:
+    # Явно указываем класс через аннотацию (работает везде)
+    kubernetes.io/ingress.class: nginx
   hosts:
     - host: django-app.local
       paths:
