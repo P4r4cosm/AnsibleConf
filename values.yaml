@@ -41,7 +41,7 @@ postgresql:
     username: "django_user"
     password: "postgres_password_123"
   persistence:
-    enabled: true
+    enabled: false
     size: 5Gi
 
 monitoring:
