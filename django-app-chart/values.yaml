@@ -42,7 +42,11 @@ ingress:
 postgresql:
   enabled: true
   image:
-    tag: "15"
+    registry: docker.io
+    repository: bitnami/postgresql
+    tag: "15.5.0-debian-11-r24"
+    pullPolicy: IfNotPresent
+
   # Важные настройки для отключения дисков в чартах Bitnami версий 11+
   primary:
     persistence:
