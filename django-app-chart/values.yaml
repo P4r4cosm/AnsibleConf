@@ -30,7 +30,7 @@ resources:
 
 ingress:
   enabled: true
-    annotations:
+  annotations:
     # Явно указываем класс через аннотацию (работает везде)
     kubernetes.io/ingress.class: nginx
   hosts:
