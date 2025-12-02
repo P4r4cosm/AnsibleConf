@@ -2,13 +2,17 @@ global:
   namespace: django-app
 
 image:
-  # IP вашего реестра
+  registry: "192.168.31.158:30500" # БЕЗ http://
+  username: "admin"
+  password: "admin123" # Пароль от registry (из лабы 4)
   repository: "192.168.31.158:30500/django-app"
   tag: "latest"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always # Лучше Always для разработки
 
+imagePullSecrets:
+  create: true
 app:
-  replicas: 3
+  replicas: 1
   serviceType: ClusterIP
   port: 8000
   env:
