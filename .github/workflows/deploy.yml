@@ -5,7 +5,6 @@ on:
     branches: [ main ]
 
 env:
-  # IP вашего приватного реджистри
   REGISTRY: "192.168.31.158:30500"
   IMAGE_NAME: "django-app"
   K8S_NAMESPACE: "django-app"
@@ -13,24 +12,19 @@ env:
 
 jobs:
   build-and-push:
-    # ВАЖНО: используем self-hosted раннер, так как GitHub не видит ваш локальный IP
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
-      # Настройка Docker Buildx (нужно для кэширования и работы драйверов)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          # Эта опция позволяет сборщику видеть сеть хоста
           driver-opts: network=host
-          # А вот это самое важное - разрешаем HTTP для твоего IP
           buildkitd-config-inline: |
             [registry."192.168.31.158:30500"]
               http = true
               insecure = true
-      # Логинимся в локальный реджистри (пароль берем явно или через секреты, 
-      # для простоты в лабе можно хардкодом, но лучше secrets.REGISTRY_PASSWORD)
+
       - name: Log in to private registry
         run: docker login ${{ env.REGISTRY }} -u admin -p admin123
 
@@ -42,19 +36,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-      - name: Create ImagePullSecret
-        run: |
-          # Создаем namespace если нет (на всякий случай)
-          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Создаем секрет с данными для входа в Registry
-          kubectl create secret docker-registry regcred \
-            --docker-server=${{ env.REGISTRY }} \
-            --docker-username=admin \
-            --docker-password=admin123 \
-            --namespace=${{ env.K8S_NAMESPACE }} \
-            --dry-run=client -o yaml | kubectl apply -f -
+      
+      # !!! ШАГ Create ImagePullSecret УДАЛЕН ОТСЮДА !!!
+      # Секрет теперь создается внутри Helm-чарта
 
   deploy-with-helm:
     needs: build-and-push
@@ -62,25 +46,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Установка Helm (если вдруг нет на раннере)
       - name: Install Helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-        continue-on-error: true # Если уже стоит, не падать
+        continue-on-error: true
 
       - name: Deploy with Helm
         run: |
           # 1. Создаем namespace если нет
           kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
           
-          # 2. Обновляем зависимости чарта (на всякий случай)
-          # Используем OCI, чтобы не было ошибки 403
+          # 2. Обновляем зависимости
           helm dependency update ./django-app-chart --skip-refresh
 
-          # 3. Деплоим/Обновляем
+          # 3. Деплоим
+          # Мы добавили regcred в сам чарт, поэтому Helm создаст его сам корректно
           helm upgrade --install ${{ env.HELM_RELEASE }} ./django-app-chart \
             --namespace ${{ env.K8S_NAMESPACE }} \
             --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
             --set image.tag=${{ github.sha }} \
+            --set app.replicas=1 \
             --wait \
             --timeout 300s
