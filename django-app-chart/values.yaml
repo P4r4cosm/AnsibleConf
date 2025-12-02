@@ -41,6 +41,8 @@ ingress:
 # Настройки для Sub-chart PostgreSQL
 postgresql:
   enabled: true
+  image:
+    tag: "15"
   # Важные настройки для отключения дисков в чартах Bitnami версий 11+
   primary:
     persistence:
