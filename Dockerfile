@@ -8,5 +8,5 @@ COPY . .
 # Сбор статики при сборке образа
 RUN python manage.py collectstatic --noinput
 # Запуск через gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "3", "django_app.wsgi:application"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--access-logfile", "-", "--error-logfile", "-",  "--workers", "3", "django_app.wsgi:application"]
 EXPOSE 8000
